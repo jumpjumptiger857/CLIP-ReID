@@ -25,17 +25,18 @@ def do_train_stage2(cfg,
     eval_period = cfg.SOLVER.STAGE2.EVAL_PERIOD
     instance = cfg.DATALOADER.NUM_INSTANCE
 
-    device = "cuda"
+    device = torch.device(cfg.MODEL.DEVICE)
+
     epochs = cfg.SOLVER.STAGE2.MAX_EPOCHS
 
     logger = logging.getLogger("transreid.train")
     logger.info('start training')
     _LOCAL_PROCESS_GROUP = None
     if device:
-        model.to(local_rank)
+        model.to(device)
         if torch.cuda.device_count() > 1:
             print('Using {} GPUs for training'.format(torch.cuda.device_count()))
-            model = nn.DataParallel(model)  
+            model = nn.DataParallel(model)
             num_classes = model.module.num_classes
         else:
             num_classes = model.num_classes
@@ -44,9 +45,15 @@ def do_train_stage2(cfg,
     acc_meter = AverageMeter()
 
     evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)
-    scaler = amp.GradScaler()
-    xent = SupConLoss(device)
-    
+    use_amp = device.type == "cuda"
+
+    if use_amp:
+        scaler = amp.GradScaler()
+    else:
+        scaler = None
+
+    xent = SupConLoss().to(device)
+
     # train
     import time
     from datetime import timedelta
@@ -65,10 +72,10 @@ def do_train_stage2(cfg,
                 l_list = torch.arange(i*batch, (i+1)* batch)
             else:
                 l_list = torch.arange(i*batch, num_classes)
-            with amp.autocast(enabled=True):
+            with amp.autocast(enabled=use_amp):
                 text_feature = model(label = l_list, get_text = True)
-            text_features.append(text_feature.cpu())
-        text_features = torch.cat(text_features, 0).cuda()
+            text_features.append(text_feature.detach())
+        text_features = torch.cat(text_features, 0).to(device)
 
     for epoch in range(1, epochs + 1):
         start_time = time.time()
@@ -86,21 +93,26 @@ def do_train_stage2(cfg,
             target = vid.to(device)
             if cfg.MODEL.SIE_CAMERA:
                 target_cam = target_cam.to(device)
-            else: 
+            else:
                 target_cam = None
             if cfg.MODEL.SIE_VIEW:
                 target_view = target_view.to(device)
-            else: 
+            else:
                 target_view = None
-            with amp.autocast(enabled=True):
-                score, feat, image_features = model(x = img, label = target, cam_label=target_cam, view_label=target_view)
+            if use_amp:
+                with amp.autocast(enabled=use_amp):
+                    score, feat, image_features = model(x = img, label = target, cam_label=target_cam, view_label=target_view)
+                    logits = image_features @ text_features.t()
+                    loss = loss_fn(score, feat, target, target_cam, logits)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                score, feat, image_features = model(x=img, label=target, cam_label=target_cam, view_label=target_view)
                 logits = image_features @ text_features.t()
                 loss = loss_fn(score, feat, target, target_cam, logits)
-
-            scaler.scale(loss).backward()
-
-            scaler.step(optimizer)
-            scaler.update()
+                loss.backward()
+                optimizer.step()
 
             if 'center' in cfg.MODEL.METRIC_LOSS_TYPE:
                 for param in center_criterion.parameters():
@@ -113,7 +125,8 @@ def do_train_stage2(cfg,
             loss_meter.update(loss.item(), img.shape[0])
             acc_meter.update(acc, 1)
 
-            torch.cuda.synchronize()
+            if device.type == "cuda":
+                torch.cuda.synchronize()
             if (n_iter + 1) % log_period == 0:
                 logger.info("Epoch[{}] Iteration[{}/{}] Loss: {:.3f}, Acc: {:.3f}, Base Lr: {:.2e}"
                             .format(epoch, (n_iter + 1), len(train_loader_stage2),
@@ -145,11 +158,11 @@ def do_train_stage2(cfg,
                             img = img.to(device)
                             if cfg.MODEL.SIE_CAMERA:
                                 camids = camids.to(device)
-                            else: 
+                            else:
                                 camids = None
                             if cfg.MODEL.SIE_VIEW:
                                 target_view = target_view.to(device)
-                            else: 
+                            else:
                                 target_view = None
                             feat = model(img, cam_label=camids, view_label=target_view)
                             evaluator.update((feat, vid, camid))
@@ -158,7 +171,8 @@ def do_train_stage2(cfg,
                     logger.info("mAP: {:.1%}".format(mAP))
                     for r in [1, 5, 10]:
                         logger.info("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
-                    torch.cuda.empty_cache()
+                    if device.type == "cuda":
+                        torch.cuda.empty_cache()
             else:
                 model.eval()
                 for n_iter, (img, vid, camid, camids, target_view, _) in enumerate(val_loader):
@@ -166,11 +180,11 @@ def do_train_stage2(cfg,
                         img = img.to(device)
                         if cfg.MODEL.SIE_CAMERA:
                             camids = camids.to(device)
-                        else: 
+                        else:
                             camids = None
                         if cfg.MODEL.SIE_VIEW:
                             target_view = target_view.to(device)
-                        else: 
+                        else:
                             target_view = None
                         feat = model(img, cam_label=camids, view_label=target_view)
                         evaluator.update((feat, vid, camid))
@@ -179,7 +193,8 @@ def do_train_stage2(cfg,
                 logger.info("mAP: {:.1%}".format(mAP))
                 for r in [1, 5, 10]:
                     logger.info("CMC curve, Rank-{:<3}:{:.1%}".format(r, cmc[r - 1]))
-                torch.cuda.empty_cache()
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
 
     all_end_time = time.monotonic()
     total_time = timedelta(seconds=all_end_time - all_start_time)
@@ -190,7 +205,8 @@ def do_inference(cfg,
                  model,
                  val_loader,
                  num_query):
-    device = "cuda"
+    device = torch.device(cfg.MODEL.DEVICE)
+
     logger = logging.getLogger("transreid.test")
     logger.info("Enter inferencing")
 
@@ -198,11 +214,12 @@ def do_inference(cfg,
 
     evaluator.reset()
 
-    if device:
-        if torch.cuda.device_count() > 1:
-            print('Using {} GPUs for inference'.format(torch.cuda.device_count()))
-            model = nn.DataParallel(model)
-        model.to(device)
+    model.to(device)
+
+    if device.type == "cuda" and torch.cuda.device_count() > 1 and not cfg.MODEL.DIST_TRAIN:
+        print(f"Using {torch.cuda.device_count()} GPUs for training")
+        model = nn.DataParallel(model)
+
 
     model.eval()
     img_path_list = []
@@ -212,11 +229,11 @@ def do_inference(cfg,
             img = img.to(device)
             if cfg.MODEL.SIE_CAMERA:
                 camids = camids.to(device)
-            else: 
+            else:
                 camids = None
             if cfg.MODEL.SIE_VIEW:
                 target_view = target_view.to(device)
-            else: 
+            else:
                 target_view = None
             feat = model(img, cam_label=camids, view_label=target_view)
             evaluator.update((feat, pid, camid))

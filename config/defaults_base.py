@@ -16,7 +16,7 @@ _C = CN()
 # -----------------------------------------------------------------------------
 _C.MODEL = CN()
 # Using cuda or cpu for training
-_C.MODEL.DEVICE = "cuda"
+_C.MODEL.DEVICE = "cpu"
 # ID number of GPU
 _C.MODEL.DEVICE_ID = '0'
 # Name of backbone
@@ -88,7 +88,7 @@ _C.DATASETS = CN()
 # List of the dataset names for training, as present in paths_catalog.py
 _C.DATASETS.NAMES = ('market1501')
 # Root directory where datasets should be used (and downloaded if not found)
-_C.DATASETS.ROOT_DIR = ('../data')
+_C.DATASETS.ROOT_DIR = ('../datasets')
 
 
 # -----------------------------------------------------------------------------
@@ -96,7 +96,7 @@ _C.DATASETS.ROOT_DIR = ('../data')
 # -----------------------------------------------------------------------------
 _C.DATALOADER = CN()
 # Number of data loading threads
-_C.DATALOADER.NUM_WORKERS = 8
+_C.DATALOADER.NUM_WORKERS = 0
 # Sampler for data loading
 _C.DATALOADER.SAMPLER = 'softmax'
 # Number of instance for one batch
@@ -155,7 +155,7 @@ _C.SOLVER.CHECKPOINT_PERIOD = 10
 # iteration of display training log
 _C.SOLVER.LOG_PERIOD = 100
 # epoch number of validation
-_C.SOLVER.EVAL_PERIOD = 10
+_C.SOLVER.EVAL_PERIOD = 1
 # Number of images per batch
 # This is global, so if we have 8 GPUs and IMS_PER_BATCH = 128, each GPU will
 # contain 16 images per batch
@@ -167,7 +167,7 @@ _C.SOLVER.IMS_PER_BATCH = 64
 
 _C.TEST = CN()
 # Number of images per batch during test
-_C.TEST.IMS_PER_BATCH = 128
+_C.TEST.IMS_PER_BATCH = 2
 # If test with re-ranking, options: 'True','False'
 _C.TEST.RE_RANKING = False
 # Path to trained model

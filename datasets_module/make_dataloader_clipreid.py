@@ -11,6 +11,7 @@ from .msmt17 import MSMT17
 from .sampler_ddp import RandomIdentitySampler_DDP
 import torch.distributed as dist
 from .occ_duke import OCC_DukeMTMCreID
+from .occ_reid import OCC_OccludedReID
 from .vehicleid import VehicleID
 from .veri import VeRi
 
@@ -19,6 +20,7 @@ __factory = {
     'dukemtmc': DukeMTMCreID,
     'msmt17': MSMT17,
     'occ_duke': OCC_DukeMTMCreID,
+    'occ_reid': OCC_OccludedReID,
     'veri': VeRi,
     'VehicleID': VehicleID
 }

@@ -1,12 +1,15 @@
 MODEL:
+  # DEVICE: "cpu"
   PRETRAIN_CHOICE: 'imagenet'
-  METRIC_LOSS_TYPE: 'triplet'
+  METRIC_LOSS_TYPE: 'softmax'
   IF_LABELSMOOTH: 'on'
   IF_WITH_CENTER: 'no'
   NAME: 'ViT-B-16'
   STRIDE_SIZE: [16, 16]
   ID_LOSS_WEIGHT : 1.0
   TRIPLET_LOSS_WEIGHT : 1.0
+  DIST_TRAIN: False
+  COS_LAYER: False
   # SIE_CAMERA: True
   # SIE_COE : 1.0
   
@@ -21,11 +24,11 @@ INPUT:
 
 DATALOADER:
   SAMPLER: 'softmax_triplet'
-  NUM_INSTANCE: 4
-  NUM_WORKERS: 8
+  NUM_INSTANCE: 2
+  NUM_WORKERS: 0
 
 SOLVER:
-  IMS_PER_BATCH: 64
+  IMS_PER_BATCH: 2
   OPTIMIZER_NAME: "Adam"
   BASE_LR: 0.000005
   WARMUP_METHOD: 'linear'
@@ -34,27 +37,27 @@ SOLVER:
   WEIGHT_DECAY:  0.0001
   WEIGHT_DECAY_BIAS: 0.0001
   LARGE_FC_LR: False
-  MAX_EPOCHS: 60
-  CHECKPOINT_PERIOD: 60
+  MAX_EPOCHS: 2
+  CHECKPOINT_PERIOD: 1
   LOG_PERIOD: 50
-  EVAL_PERIOD: 60
+  EVAL_PERIOD: 1
   BIAS_LR_FACTOR: 2
   
   STEPS: [30, 50]
   GAMMA: 0.1
   
 TEST:
-  EVAL: True
-  IMS_PER_BATCH: 64
+  EVAL: False
+  IMS_PER_BATCH: 2
   RE_RANKING: False
   WEIGHT: ''
   NECK_FEAT: 'before'
   FEAT_NORM: 'yes'
 
 DATASETS:
-#   NAMES: ('market1501')
-#   ROOT_DIR: ('')
-# OUTPUT_DIR: ''
+   NAMES: ('market1501')
+   ROOT_DIR: ('../datasets')
+OUTPUT_DIR: 'your_output_dir'
 
 #   NAMES: ('dukemtmc')
 #   ROOT_DIR: ('')

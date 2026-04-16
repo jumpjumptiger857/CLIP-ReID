@@ -55,7 +55,7 @@ class CircleLoss(nn.Module):
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
-    def __call__(self, bn_feat, targets):
+    def forword(self, bn_feat, targets):
 
         sim_mat = F.linear(F.normalize(bn_feat), F.normalize(self.weight))
         alpha_p = torch.clamp_min(-sim_mat.detach() + 1 + self.m, min=0.)
@@ -110,7 +110,8 @@ class Arcface(nn.Module):
             phi = torch.where(cosine > self.th, phi, cosine - self.mm)
         # --------------------------- convert label to one-hot ---------------------------
         # one_hot = torch.zeros(cosine.size(), requires_grad=True, device='cuda')
-        one_hot = torch.zeros(cosine.size(), device='cuda')
+        device = input.device
+        one_hot = torch.zeros(cosine.size(), device=device)
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
         if self.ls_eps > 0:
             one_hot = (1 - self.ls_eps) * one_hot + self.ls_eps / self.out_features
@@ -145,7 +146,7 @@ class Cosface(nn.Module):
         cosine = F.linear(F.normalize(input), F.normalize(self.weight))
         phi = cosine - self.m
         # --------------------------- convert label to one-hot ---------------------------
-        one_hot = torch.zeros(cosine.size(), device='cuda')
+        one_hot = torch.zeros(cosine.size(), device=input.device)
         # one_hot = one_hot.cuda() if cosine.is_cuda else one_hot
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
         # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
@@ -183,7 +184,8 @@ class AMSoftmax(nn.Module):
         costh = torch.mm(x_norm, w_norm)
         # print(x_norm.shape, w_norm.shape, costh.shape)
         lb_view = lb.view(-1, 1)
-        delt_costh = torch.zeros(costh.size(), device='cuda').scatter_(1, lb_view, self.m)
+        device = x.device
+        delt_costh = torch.zeros(costh.size(), device=device).scatter_(1, lb_view, self.m)
         costh_m = costh - delt_costh
         costh_m_s = self.s * costh_m
         return costh_m_s

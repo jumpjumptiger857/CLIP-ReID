@@ -2,8 +2,10 @@ import torch
 import torch.nn as nn
 import numpy as np
 from .clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+
 _tokenizer = _Tokenizer()
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -19,6 +21,7 @@ def weights_init_kaiming(m):
         if m.affine:
             nn.init.constant_(m.weight, 1.0)
             nn.init.constant_(m.bias, 0.0)
+
 
 def weights_init_classifier(m):
     classname = m.__class__.__name__
@@ -37,17 +40,18 @@ class TextEncoder(nn.Module):
         self.text_projection = clip_model.text_projection
         self.dtype = clip_model.dtype
 
-    def forward(self, prompts, tokenized_prompts): 
-        x = prompts + self.positional_embedding.type(self.dtype) 
+    def forward(self, prompts, tokenized_prompts):
+        x = prompts + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND 
-        x = self.transformer(x) 
+        x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x).type(self.dtype) 
+        x = self.ln_final(x).type(self.dtype)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), tokenized_prompts.argmax(dim=-1)] @ self.text_projection 
+        x = x[torch.arange(x.shape[0]), tokenized_prompts.argmax(dim=-1)] @ self.text_projection
         return x
+
 
 class build_transformer(nn.Module):
     def __init__(self, num_classes, camera_num, view_num, cfg):
@@ -65,7 +69,7 @@ class build_transformer(nn.Module):
         self.num_classes = num_classes
         self.camera_num = camera_num
         self.view_num = view_num
-        self.sie_coe = cfg.MODEL.SIE_COE   
+        self.sie_coe = cfg.MODEL.SIE_COE
 
         self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
         self.classifier.apply(weights_init_classifier)
@@ -79,11 +83,16 @@ class build_transformer(nn.Module):
         self.bottleneck_proj.bias.requires_grad_(False)
         self.bottleneck_proj.apply(weights_init_kaiming)
 
-        self.h_resolution = int((cfg.INPUT.SIZE_TRAIN[0]-16)//cfg.MODEL.STRIDE_SIZE[0] + 1)
-        self.w_resolution = int((cfg.INPUT.SIZE_TRAIN[1]-16)//cfg.MODEL.STRIDE_SIZE[1] + 1)
+        self.h_resolution = int((cfg.INPUT.SIZE_TRAIN[0] - 16) // cfg.MODEL.STRIDE_SIZE[0] + 1)
+        self.w_resolution = int((cfg.INPUT.SIZE_TRAIN[1] - 16) // cfg.MODEL.STRIDE_SIZE[1] + 1)
         self.vision_stride_size = cfg.MODEL.STRIDE_SIZE[0]
-        clip_model = load_clip_to_cpu(self.model_name, self.h_resolution, self.w_resolution, self.vision_stride_size)
-        clip_model.to("cuda")
+        clip_model = load_clip_to_cpu(
+            self.model_name,
+            self.h_resolution,
+            self.w_resolution,
+            self.vision_stride_size
+        )
+        # ❌ 不要在这里 .to(device)
 
         self.image_encoder = clip_model.visual
 
@@ -104,42 +113,43 @@ class build_transformer(nn.Module):
         self.prompt_learner = PromptLearner(num_classes, dataset_name, clip_model.dtype, clip_model.token_embedding)
         self.text_encoder = TextEncoder(clip_model)
 
-    def forward(self, x = None, label=None, get_image = False, get_text = False, cam_label= None, view_label=None):
+    def forward(self, x=None, label=None, get_image=False, get_text=False, cam_label=None, view_label=None):
         if get_text == True:
-            prompts = self.prompt_learner(label) 
+            prompts = self.prompt_learner(label)
             text_features = self.text_encoder(prompts, self.prompt_learner.tokenized_prompts)
             return text_features
 
         if get_image == True:
-            image_features_last, image_features, image_features_proj = self.image_encoder(x) 
+            image_features_last, image_features, image_features_proj = self.image_encoder(x)
             if self.model_name == 'RN50':
                 return image_features_proj[0]
             elif self.model_name == 'ViT-B-16':
-                return image_features_proj[:,0]
-        
+                return image_features_proj[:, 0]
+
         if self.model_name == 'RN50':
-            image_features_last, image_features, image_features_proj = self.image_encoder(x) 
-            img_feature_last = nn.functional.avg_pool2d(image_features_last, image_features_last.shape[2:4]).view(x.shape[0], -1) 
-            img_feature = nn.functional.avg_pool2d(image_features, image_features.shape[2:4]).view(x.shape[0], -1) 
+            image_features_last, image_features, image_features_proj = self.image_encoder(x)
+            img_feature_last = nn.functional.avg_pool2d(image_features_last, image_features_last.shape[2:4]).view(
+                x.shape[0], -1)
+            img_feature = nn.functional.avg_pool2d(image_features, image_features.shape[2:4]).view(x.shape[0], -1)
             img_feature_proj = image_features_proj[0]
 
         elif self.model_name == 'ViT-B-16':
-            if cam_label != None and view_label!=None:
+            if cam_label != None and view_label != None:
                 cv_embed = self.sie_coe * self.cv_embed[cam_label * self.view_num + view_label]
             elif cam_label != None:
                 cv_embed = self.sie_coe * self.cv_embed[cam_label]
-            elif view_label!=None:
+            elif view_label != None:
                 cv_embed = self.sie_coe * self.cv_embed[view_label]
             else:
                 cv_embed = None
-            image_features_last, image_features, image_features_proj = self.image_encoder(x, cv_embed) 
-            img_feature_last = image_features_last[:,0]
-            img_feature = image_features[:,0]
-            img_feature_proj = image_features_proj[:,0]
+            image_features_last, image_features, image_features_proj = self.image_encoder(x, cv_embed)
+            img_feature_last = image_features_last[:, 0]
+            img_feature = image_features[:, 0]
+            img_feature_proj = image_features_proj[:, 0]
 
-        feat = self.bottleneck(img_feature) 
-        feat_proj = self.bottleneck_proj(img_feature_proj) 
-        
+        feat = self.bottleneck(img_feature)
+        feat_proj = self.bottleneck_proj(img_feature_proj)
+
         if self.training:
             cls_score = self.classifier(feat)
             cls_score_proj = self.classifier_proj(feat_proj)
@@ -152,13 +162,30 @@ class build_transformer(nn.Module):
             else:
                 return torch.cat([img_feature, img_feature_proj], dim=1)
 
+    # def load_param(self, trained_path):
+    #     param_dict = torch.load(trained_path)
+    #     for i in param_dict:
+    #         self.state_dict()[i.replace('module.', '')].copy_(param_dict[i])
+    #     print('Loading pretrained model from {}'.format(trained_path))
 
     def load_param(self, trained_path):
         param_dict = torch.load(trained_path)
-        for i in param_dict:
-            self.state_dict()[i.replace('module.', '')].copy_(param_dict[i])
-        print('Loading pretrained model from {}'.format(trained_path))
+        if 'state_dict' in param_dict:
+            param_dict = param_dict['state_dict']
 
+        model_dict = self.state_dict()
+
+        for k, v in param_dict.items():
+            key = k.replace('module.', '')
+            if key not in model_dict:
+                print('Skip {} (not in model)'.format(key))
+                continue
+            if model_dict[key].shape != v.shape:
+                print('Skip {} due to shape mismatch: model {} vs ckpt {}'.format(
+                    key, tuple(model_dict[key].shape), tuple(v.shape)
+                ))
+                continue
+            model_dict[key].copy_(v)
     def load_param_finetune(self, model_path):
         param_dict = torch.load(model_path)
         for i in param_dict:
@@ -172,6 +199,8 @@ def make_model(cfg, num_class, camera_num, view_num):
 
 
 from .clip import clip
+
+
 def load_clip_to_cpu(backbone_name, h_resolution, w_resolution, vision_stride_size):
     url = clip._MODELS[backbone_name]
     model_path = clip._download(url)
@@ -188,6 +217,7 @@ def load_clip_to_cpu(backbone_name, h_resolution, w_resolution, vision_stride_si
 
     return model
 
+
 class PromptLearner(nn.Module):
     def __init__(self, num_class, dataset_name, dtype, token_embedding):
         super().__init__()
@@ -200,40 +230,39 @@ class PromptLearner(nn.Module):
         # use given words to initialize context vectors
         ctx_init = ctx_init.replace("_", " ")
         n_ctx = 4
-        
-        tokenized_prompts = clip.tokenize(ctx_init).cuda() 
+
+        tokenized_prompts = clip.tokenize(ctx_init)
         with torch.no_grad():
-            embedding = token_embedding(tokenized_prompts).type(dtype) 
+            embedding = token_embedding(tokenized_prompts).type(dtype)
         self.tokenized_prompts = tokenized_prompts  # torch.Tensor
 
         n_cls_ctx = 4
-        cls_vectors = torch.empty(num_class, n_cls_ctx, ctx_dim, dtype=dtype) 
+        cls_vectors = torch.empty(num_class, n_cls_ctx, ctx_dim, dtype=dtype)
         nn.init.normal_(cls_vectors, std=0.02)
-        self.cls_ctx = nn.Parameter(cls_vectors) 
+        self.cls_ctx = nn.Parameter(cls_vectors)
 
-        
         # These token vectors will be saved when in save_model(),
         # but they should be ignored in load_model() as we want to use
         # those computed using the current class names
-        self.register_buffer("token_prefix", embedding[:, :n_ctx + 1, :])  
-        self.register_buffer("token_suffix", embedding[:, n_ctx + 1 + n_cls_ctx: , :])  
+        self.register_buffer("token_prefix", embedding[:, :n_ctx + 1, :])
+        self.register_buffer("token_suffix", embedding[:, n_ctx + 1 + n_cls_ctx:, :])
         self.num_class = num_class
         self.n_cls_ctx = n_cls_ctx
 
     def forward(self, label):
-        cls_ctx = self.cls_ctx[label] 
+        cls_ctx = self.cls_ctx[label]
         b = label.shape[0]
-        prefix = self.token_prefix.expand(b, -1, -1) 
-        suffix = self.token_suffix.expand(b, -1, -1) 
-            
+        prefix = self.token_prefix.expand(b, -1, -1)
+        suffix = self.token_suffix.expand(b, -1, -1)
+
         prompts = torch.cat(
             [
                 prefix,  # (n_cls, 1, dim)
-                cls_ctx,     # (n_cls, n_ctx, dim)
+                cls_ctx,  # (n_cls, n_ctx, dim)
                 suffix,  # (n_cls, *, dim)
             ],
             dim=1,
-        ) 
+        )
 
         return prompts 
 

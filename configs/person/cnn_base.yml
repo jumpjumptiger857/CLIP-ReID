@@ -34,7 +34,7 @@ SOLVER:
   MAX_EPOCHS: 120
   CHECKPOINT_PERIOD: 120
   LOG_PERIOD: 50
-  EVAL_PERIOD: 120
+  EVAL_PERIOD: 1
   BIAS_LR_FACTOR: 2
   
   STEPS: [40, 70]
@@ -49,9 +49,9 @@ TEST:
   FEAT_NORM: 'yes'
 
 DATASETS:
-#   NAMES: ('market1501')
-#   ROOT_DIR: ('')
-# OUTPUT_DIR: ''
+   NAMES: ('market1501')
+   ROOT_DIR: ('../数据集')
+OUTPUT_DIR: 'your_output_dir'
 
 #   NAMES: ('dukemtmc')
 #   ROOT_DIR: ('')

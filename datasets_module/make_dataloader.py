@@ -23,34 +23,51 @@ __factory = {
     'VehicleID': VehicleID
 }
 
+# collate_fn 是 DataLoader 的“batch 组装器”：
+# train 只返回训练所需最小信息，
+# val 返回完整元数据用于评估与分析。
 def train_collate_fn(batch):
     """
     # collate_fn这个函数的输入就是一个list，list的长度是一个batch size，list中的每个元素都是__getitem__得到的结果
     """
+    # zip(*batch)：解包 batch
     imgs, pids, camids, viewids , _ = zip(*batch)
+    # 标签转成 Tensor
     pids = torch.tensor(pids, dtype=torch.int64)
     viewids = torch.tensor(viewids, dtype=torch.int64)
     camids = torch.tensor(camids, dtype=torch.int64)
+    # 图片 stack 成 batch  eg:单张 img: [3, H, W];  stack 后：batch img: [B, 3, H, W]
     return torch.stack(imgs, dim=0), pids, camids, viewids,
 
 def val_collate_fn(batch):
+    # 同样先解包但保留了 img_paths
     imgs, pids, camids, viewids, img_paths = zip(*batch)
     viewids = torch.tensor(viewids, dtype=torch.int64)
     camids_batch = torch.tensor(camids, dtype=torch.int64)
+    # camids：原始 tuple； camids_batch：Tensor 版
     return torch.stack(imgs, dim=0), pids, camids, camids_batch, viewids, img_paths
 
 def make_dataloader(cfg):
+    # 训练数据的数据增强，防止过拟合，提高鲁棒性
     train_transforms = T.Compose([
+            # Resize: 统一训练图片尺寸
             T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            # RandomHorizontalFlip： 随机左右翻转，增强泛化
             T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            # Pad： 先填充边缘，为随机裁剪做准备
             T.Pad(cfg.INPUT.PADDING),
+            # RandomCrop： 随机裁剪，增加位置鲁棒性
             T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            # ToTensor： PIL -> Tensor
             T.ToTensor(),
+            # Normalize: 标准化
             T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            # RandomErasing： 随机遮挡
             RandomErasing(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
             # RandomErasing(probability=cfg.INPUT.RE_PROB, mean=cfg.INPUT.PIXEL_MEAN)
         ])
 
+    # 验证数据的数据处理
     val_transforms = T.Compose([
         T.Resize(cfg.INPUT.SIZE_TEST),
         T.ToTensor(),
@@ -59,10 +76,15 @@ def make_dataloader(cfg):
 
     num_workers = cfg.DATALOADER.NUM_WORKERS
 
+    # 读取数据集
     dataset = __factory[cfg.DATASETS.NAMES](root=cfg.DATASETS.ROOT_DIR)
     
+    # 构建 Dataset 对象
+    # train_set：带增强的训练集
     train_set = ImageDataset(dataset.train, train_transforms)
+    # train_set_normal：不增强的训练集。 常用于训练集评估
     train_set_normal = ImageDataset(dataset.train, val_transforms)
+    # 训练集中 行人 ID 数
     num_classes = dataset.num_train_pids
     cam_num = dataset.num_train_cams
     view_num = dataset.num_train_vids
@@ -82,7 +104,12 @@ def make_dataloader(cfg):
             )
         else:
             train_loader = DataLoader(
-                train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH,
+                train_set,
+                # 最终一个 iteration（迭代） 的 batch 大小
+                batch_size=cfg.SOLVER.IMS_PER_BATCH,
+                # 用 RandomIdentitySampler 构造一个训练 DataLoader，
+                # 保证 每个 batch 中：同一个 ID 有多张图，不同 ID 也同时存在，
+                # 以便 Triplet Loss 能正常工作。
                 sampler=RandomIdentitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE),
                 num_workers=num_workers, collate_fn=train_collate_fn
             )
@@ -95,12 +122,19 @@ def make_dataloader(cfg):
     else:
         print('unsupported sampler! expected softmax or triplet but got {}'.format(cfg.SAMPLER))
 
+    # 建验证/测试 Dataset
     val_set = ImageDataset(dataset.query + dataset.gallery, val_transforms)
 
     val_loader = DataLoader(
-        val_set, batch_size=cfg.TEST.IMS_PER_BATCH, shuffle=False, num_workers=num_workers,
+        val_set,
+        # 测试时通常可以设得 比训练大 ，因为不反转，显存压力小
+        batch_size=cfg.TEST.IMS_PER_BATCH,
+        # 测试 / 评估阶段绝对不能 shuffle，因为特征顺序要和：query，gallery位置一一对应
+        shuffle=False,
+        num_workers=num_workers,
         collate_fn=val_collate_fn
     )
+    # 用于评估 / 特征提取
     train_loader_normal = DataLoader(
         train_set_normal, batch_size=cfg.TEST.IMS_PER_BATCH, shuffle=False, num_workers=num_workers,
         collate_fn=val_collate_fn
